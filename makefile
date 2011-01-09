@@ -1,6 +1,6 @@
 # Hey Emacs, this is a -*- makefile -*-
 #----------------------------------------------------------------------------
-# WinAVR Makefile Template written by Eric B. Weddington, Jörg Wunsch, et al.
+# WinAVR Makefile Template written by Eric B. Weddington, JÃ¶rg Wunsch, et al.
 #  >> Modified for use with the LUFA project. <<
 #
 # Released to the Public Domain
@@ -113,7 +113,7 @@ FORMAT = ihex
 
 
 # Target file name (without extension).
-TARGET = Arduino-usbserial
+TARGET = MIDI
 
 
 # Object files directory
@@ -149,8 +149,8 @@ SRC = $(TARGET).c                                                 \
 	  $(LUFA_PATH)/LUFA/Drivers/USB/LowLevel/Endpoint.c           \
 	  $(LUFA_PATH)/LUFA/Drivers/USB/HighLevel/HostStandardReq.c	  \
 	  $(LUFA_PATH)/LUFA/Drivers/USB/LowLevel/Host.c               \
- 	  $(LUFA_PATH)/LUFA/Drivers/USB/LowLevel/Pipe.c               \
- 	  $(LUFA_PATH)/LUFA/Drivers/USB/LowLevel/USBController.c      \
+	  $(LUFA_PATH)/LUFA/Drivers/USB/LowLevel/Pipe.c               \
+	  $(LUFA_PATH)/LUFA/Drivers/USB/LowLevel/USBController.c      \
 	  $(LUFA_PATH)/LUFA/Drivers/USB/HighLevel/Events.c            \
 	  $(LUFA_PATH)/LUFA/Drivers/USB/LowLevel/USBInterrupt.c       \
 	  $(LUFA_PATH)/LUFA/Drivers/USB/HighLevel/USBTask.c           \
@@ -548,7 +548,7 @@ sizeafter:
 #	                 grep -F -v --file=$(LUFA_PATH)/LUFA/LUFA_Events.lst > InvalidEvents.tmp || true
 #	@sed -n -e 's/^/  WARNING - INVALID EVENT NAME: /p' InvalidEvents.tmp
 #	@if test -s InvalidEvents.tmp; then exit 1; fi
-	
+
 showliboptions:
 	@echo
 	@echo ---- Compile Time Library Options ----
@@ -564,7 +564,7 @@ showtarget:
 	@echo Board:     $(BOARD)
 	@echo Clock:     $(F_CPU)Hz CPU, $(F_CLOCK)Hz Master
 	@echo --------------------------------------
-	
+
 
 # Display compiler version information.
 gccversion : 
@@ -729,14 +729,14 @@ $(OBJDIR)/%.o : %.S
 # Create preprocessed source for use in sending a bug report.
 %.i : %.c
 	$(CC) -E -mmcu=$(MCU) -I. $(CFLAGS) $< -o $@ 
-	
+
 
 # Target: clean project.
 clean: begin clean_list clean_binary end
 
 clean_binary:
 	$(REMOVE) $(TARGET).hex
-	
+
 clean_list:
 	@echo $(MSG_CLEANING)
 	$(REMOVE) $(TARGET).hex
