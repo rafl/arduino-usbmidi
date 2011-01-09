@@ -70,10 +70,29 @@ int main(void)
 
 	for (;;)
 	{
-        CheckJoystickMovement();
+        while (Serial_IsCharReceived()) {
+            uint8_t cmd, data1, data2;
 
-		MIDI_EventPacket_t ReceivedMIDIEvent;
-		while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent))
+            cmd = Serial_RxByte();
+            data1 = Serial_RxByte();
+            data2 = Serial_RxByte();
+
+            MIDI_EventPacket_t MIDIEvent = (MIDI_EventPacket_t)
+            {
+                .CableNumber = 0,
+                .Command     = (cmd >> 4),
+
+                .Data1       = cmd,
+                .Data2       = data1,
+                .Data3       = data2,
+            };
+
+            MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
+            MIDI_Device_Flush(&Keyboard_MIDI_Interface);
+        }
+
+        MIDI_EventPacket_t ReceivedMIDIEvent;
+        while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent))
 		{
 			if ((ReceivedMIDIEvent.Command == (MIDI_COMMAND_NOTE_ON >> 4)) && (ReceivedMIDIEvent.Data3 > 0))
 			  LEDs_SetAllLEDs(ReceivedMIDIEvent.Data2 > 64 ? LEDS_LED1 : LEDS_LED2);
@@ -98,6 +117,7 @@ void SetupHardware(void)
 
 	/* Hardware Initialization */
     LEDs_Init();
+    Serial_Init(9600, false);
     USB_Init();
 }
 
