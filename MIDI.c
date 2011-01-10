@@ -117,7 +117,7 @@ void SetupHardware(void)
 
 	/* Hardware Initialization */
     LEDs_Init();
-    Serial_Init(9600, false);
+    Serial_Init(31250, false);
     USB_Init();
 }
 
