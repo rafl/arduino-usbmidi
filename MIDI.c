@@ -121,35 +121,6 @@ void SetupHardware(void)
     USB_Init();
 }
 
-/** Checks for changes in the position of the board joystick, sending MIDI events to the host upon each change. */
-void CheckJoystickMovement(void)
-{
-    uint8_t MIDICommand = 0;
-    uint8_t MIDIPitch;
-
-    /* Get board button status - if pressed use channel 10 (percussion), otherwise use channel 1 */
-    uint8_t Channel = 10;
-
-    MIDICommand = MIDI_COMMAND_NOTE_ON;
-    MIDIPitch   = 0x3C;
-
-    if (MIDICommand)
-    {
-        MIDI_EventPacket_t MIDIEvent = (MIDI_EventPacket_t)
-            {
-                .CableNumber = 0,
-                .Command     = (MIDICommand >> 4),
-
-                .Data1       = MIDICommand | Channel,
-                .Data2       = MIDIPitch,
-                .Data3       = MIDI_STANDARD_VELOCITY,
-            };
-
-        MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
-        MIDI_Device_Flush(&Keyboard_MIDI_Interface);
-    }
-}
-
 /** Event handler for the library USB Connection event. */
 void EVENT_USB_Device_Connect(void)
 {
