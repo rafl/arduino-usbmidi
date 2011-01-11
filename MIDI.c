@@ -73,6 +73,9 @@ int main(void)
         while (Serial_IsCharReceived()) {
             uint8_t cmd, data1, data2;
 
+            /* TODO: make sure the first byte is a status byte (bit 7 set) and
+             * discard bytes until we see one. also messages with a number of
+             * bytes other than 3 needs to be handled. */
             cmd = Serial_RxByte();
             data1 = Serial_RxByte();
             data2 = Serial_RxByte();
