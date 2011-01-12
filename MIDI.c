@@ -58,6 +58,171 @@ USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface =
             },
     };
 
+/* Send n MIDI bytes in buf over USB */
+void
+midi_send (uint8_t *buf, unsigned int n)
+{
+    MIDI_EventPacket_t MIDIEvent = {
+        .CableNumber = 0,
+        /* FIXME: system common / sysex need different commad nyble */
+        .Command     = (buf[0] >> 4),
+        .Data1       = buf[0],
+    };
+
+    switch (n) {
+    case 3:
+        MIDIEvent.Data3 = buf[2];
+    case 2:
+        MIDIEvent.Data2 = buf[1];
+    }
+
+    MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
+    MIDI_Device_Flush(&Keyboard_MIDI_Interface);
+}
+
+/* Read one MIDI byte from UART.
+ *
+ * If the byte is a realtime message, send it out via USB right away and return
+ * false. Returns true otherwise.
+ */
+bool
+midi_read (uint8_t *byte)
+{
+    *byte = Serial_RxByte();
+
+    if (*byte < 0xf8)
+        return true;
+
+    /* realtime message */
+    midi_send(byte, 1);
+    return false;
+}
+
+/* Read stuff from UART, buffering it until a full MIDI packet can be sent, and
+ * send it through USB. */
+void
+serial_read (void)
+{
+    static uint8_t last_status = 0;
+    static unsigned int bufcur = 0;
+    static uint8_t buf[3]; /* the usb midi packets have 3 bytes of data only,
+                            * even though the actual midi messages might be
+                            * longer */
+    uint8_t byte;
+
+    if (!midi_read(&byte))
+        /* we got a realtime message and handled it. try again if
+         * there's still something to read. */
+        return;
+
+    /* when reading the first byte of a message, and that byte is not a
+     * status byte, we either started receiving bytes from the middle of
+     * a message, which we're going to ignore, or we're in the middle of
+     * a running status. */
+    if (!bufcur && !(byte & (1 << 7))) {
+        if (!last_status)
+            return;
+
+        buf[0] = last_status;
+        bufcur = 1;
+    }
+
+    buf[bufcur++] = byte;
+
+    /* flush when we've reached the maximum of 3 bytes */
+    if (bufcur == 3) {
+        midi_send(buf, 3);
+        bufcur = 0;
+        return;
+    }
+
+    /* otherwise see if we can expect any more bytes for the current
+     * status byte and flush if we can't */
+
+    unsigned int expect = 0;
+
+    /* FIXME: only for voice messages */
+    switch (buf[0] >> 4) {
+    case 0x8: /* note on */
+    case 0x9: /* note off */
+    case 0xa: /* aftertouch */
+    case 0xb: /* control change */
+    case 0xe: /* pitch wheel */
+        expect = 3;
+        break;
+    case 0xc: /* program change */
+    case 0xd: /* channel pressure */
+        expect = 2;
+        break;
+    case 0xf: /* system common - realtime is already covered in midi_read */
+        /* FIXME: needs to reset last_status */
+        switch (buf[0]) {
+        case 0xf0: /* sysex start */
+            /* FIXME! */
+            break;
+        case 0xf7: /* sysex end */
+            /* FIXME! */
+            break;
+        case 0xf6: /* tune request */
+            expect = 1;
+            break;
+        case 0xf1: /* mtc quarter frame message */
+        case 0xf3: /* song select */
+            expect = 2;
+            break;
+        case 0xf2: /* song position pointer */
+            expect = 3;
+            break;
+        }
+        break;
+    }
+
+    if (bufcur != expect)
+        return;
+
+    /* we got a full packet. send it out */
+    midi_send(buf, bufcur);
+}
+
+/* Read MIDI packets from USB and send them out again via UART. */
+void
+usb_read (MIDI_EventPacket_t *ReceivedMIDIEvent)
+{
+    if (ReceivedMIDIEvent->CableNumber != 0)
+        return;
+
+    /* http://www.usb.org/developers/devclass_docs/midi10.pdf p.16f */
+    switch (ReceivedMIDIEvent->Command) {
+    case 0x0: /* misc - reserved for future use */
+    case 0x1: /* cable events - reserved for future use */
+        break;
+    case 0x5: /* single byte system common message or sysex ends with
+               * following single byte */
+    case 0xf: /* single byte for transfer w/o parsing or RT messages */
+        Serial_TxByte(ReceivedMIDIEvent->Data1);
+        break;
+    case 0x2: /* 2 byte system common message */
+    case 0x6: /* sysex ends with following two bytes */
+    case 0xc: /* program change */
+    case 0xd: /* channel pressure */
+        Serial_TxByte(ReceivedMIDIEvent->Data1);
+        Serial_TxByte(ReceivedMIDIEvent->Data2);
+        break;
+    case 0x3: /* 3 byte system common message */
+    case 0x4: /* sysex starts or continues */
+    case 0x7: /* sysex ends with following three bytes */
+    case 0x8: /* note off */
+    case 0x9: /* note on */
+    case 0xa: /* poly keypress */
+    case 0xb: /* control change */
+    case 0xe: /* pitchbend change */
+        Serial_TxByte(ReceivedMIDIEvent->Data1);
+        Serial_TxByte(ReceivedMIDIEvent->Data2);
+        Serial_TxByte(ReceivedMIDIEvent->Data3);
+        break;
+    }
+}
+
 /** Main program entry point. This routine contains the overall program flow, including initial
  *  setup of all components and the main program loop.
  */
@@ -68,69 +233,13 @@ int main(void)
     LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
     sei();
 
-    for (;;)
-    {
-        while (Serial_IsCharReceived()) {
-            uint8_t cmd, data1, data2;
-
-            /* TODO: make sure the first byte is a status byte (bit 7 set) and
-             * discard bytes until we see one. also messages with a number of
-             * bytes other than 3 needs to be handled. */
-            cmd = Serial_RxByte();
-            data1 = Serial_RxByte();
-            data2 = Serial_RxByte();
-
-            MIDI_EventPacket_t MIDIEvent = (MIDI_EventPacket_t)
-            {
-                .CableNumber = 0,
-                .Command     = (cmd >> 4),
-
-                .Data1       = cmd,
-                .Data2       = data1,
-                .Data3       = data2,
-            };
-
-            MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
-            MIDI_Device_Flush(&Keyboard_MIDI_Interface);
-        }
+    for (;;) {
+        while (Serial_IsCharReceived())
+            serial_read();
 
         MIDI_EventPacket_t ReceivedMIDIEvent;
         while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent))
-        {
-            if (ReceivedMIDIEvent.CableNumber != 0)
-                continue;
-
-            /* http://www.usb.org/developers/devclass_docs/midi10.pdf p.16f */
-            switch (ReceivedMIDIEvent.Command) {
-            case 0x0: /* misc - reserved for future use */
-            case 0x1: /* cable events - reserved for future use */
-                break;
-            case 0x5: /* single byte system common message or sysex ends with
-                       * following single byte */
-            case 0xf: /* single byte for transfer without parsing */
-                Serial_TxByte(ReceivedMIDIEvent.Data1);
-                break;
-            case 0x2: /* 2 byte system common message */
-            case 0x6: /* sysex ends with following two bytes */
-            case 0xc: /* program change */
-            case 0xd: /* channel pressure */
-                Serial_TxByte(ReceivedMIDIEvent.Data1);
-                Serial_TxByte(ReceivedMIDIEvent.Data2);
-                break;
-            case 0x3: /* 3 byte system common message */
-            case 0x4: /* sysex starts or continues */
-            case 0x7: /* sysex ends with following three bytes */
-            case 0x8: /* note off */
-            case 0x9: /* note on */
-            case 0xa: /* poly keypress */
-            case 0xb: /* control change */
-            case 0xe: /* pitchbend change */
-                Serial_TxByte(ReceivedMIDIEvent.Data1);
-                Serial_TxByte(ReceivedMIDIEvent.Data2);
-                Serial_TxByte(ReceivedMIDIEvent.Data3);
-                break;
-            }
-        }
+            usb_read(&ReceivedMIDIEvent);
 
         MIDI_Device_USBTask(&Keyboard_MIDI_Interface);
         USB_USBTask();
