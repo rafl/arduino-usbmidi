@@ -48,6 +48,8 @@ typedef enum {
     STATE_SYSEX_2,
 } midi_state;
 
+#define MIDI_CABLE 0
+
 /** LUFA MIDI Class driver interface configuration and state information. This structure is
  *  passed to all MIDI Class driver functions, so that multiple instances of the same class
  *  within a device can be differentiated from one another.
@@ -92,7 +94,7 @@ midi_state state = STATE_UNKNOWN;
 void
 usb_write (uint8_t b)
 {
-    uint8_t p0 = 0;
+    uint8_t p0 = MIDI_CABLE;
 
     if (b >= 0xf8) {
         midi_send(p0 | 0x0f, b, 0, 0);
@@ -189,7 +191,7 @@ usb_write (uint8_t b)
 void
 usb_read (MIDI_EventPacket_t *ReceivedMIDIEvent)
 {
-    if (ReceivedMIDIEvent->CableNumber != 0)
+    if (ReceivedMIDIEvent->CableNumber != MIDI_CABLE)
         return;
 
     /* http://www.usb.org/developers/devclass_docs/midi10.pdf p.16f */
