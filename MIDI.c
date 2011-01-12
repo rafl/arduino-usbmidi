@@ -100,6 +100,37 @@ int main(void)
             if (ReceivedMIDIEvent.CableNumber != 0)
                 continue;
 
+            /* http://www.usb.org/developers/devclass_docs/midi10.pdf p.16f */
+            switch (ReceivedMIDIEvent.Command) {
+            case 0x0: /* misc - reserved for future use */
+            case 0x1: /* cable events - reserved for future use */
+                break;
+            case 0x5: /* single byte system common message or sysex ends with
+                       * following single byte */
+            case 0xf: /* single byte (?) */
+                Serial_TxByte(ReceivedMIDIEvent.Data1);
+                break;
+            case 0x2: /* 2 byte system common message */
+            case 0x6: /* sysex ends with following two bytes */
+            case 0xc: /* program change */
+            case 0xd: /* channel pressure */
+                Serial_TxByte(ReceivedMIDIEvent.Data1);
+                Serial_TxByte(ReceivedMIDIEvent.Data2);
+                break;
+            case 0x3: /* 3 byte system common message */
+            case 0x4: /* sysex starts or continues */
+            case 0x7: /* sysex ends with following three bytes */
+            case 0x8: /* note off */
+            case 0x9: /* note on */
+            case 0xa: /* poly keypress */
+            case 0xb: /* control change */
+            case 0xe: /* pitchbend change */
+                Serial_TxByte(ReceivedMIDIEvent.Data1);
+                Serial_TxByte(ReceivedMIDIEvent.Data2);
+                Serial_TxByte(ReceivedMIDIEvent.Data3);
+                break;
+            }
+
             if ((ReceivedMIDIEvent.Command == (MIDI_COMMAND_NOTE_ON >> 4)) && (ReceivedMIDIEvent.Data3 > 0))
               LEDs_SetAllLEDs(ReceivedMIDIEvent.Data2 > 64 ? LEDS_LED1 : LEDS_LED2);
             else
