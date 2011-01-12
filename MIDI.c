@@ -97,6 +97,9 @@ int main(void)
         MIDI_EventPacket_t ReceivedMIDIEvent;
         while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent))
         {
+            if (ReceivedMIDIEvent.CableNumber != 0)
+                continue;
+
             if ((ReceivedMIDIEvent.Command == (MIDI_COMMAND_NOTE_ON >> 4)) && (ReceivedMIDIEvent.Data3 > 0))
               LEDs_SetAllLEDs(ReceivedMIDIEvent.Data2 > 64 ? LEDS_LED1 : LEDS_LED2);
             else
