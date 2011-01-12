@@ -38,6 +38,16 @@
 
 #include <LUFA/Drivers/Peripheral/Serial.c>
 
+typedef enum {
+    STATE_UNKNOWN,
+    STATE_1PARAM,
+    STATE_2PARAM_1,
+    STATE_2PARAM_2,
+    STATE_SYSEX_0,
+    STATE_SYSEX_1,
+    STATE_SYSEX_2,
+} midi_state;
+
 /** LUFA MIDI Class driver interface configuration and state information. This structure is
  *  passed to all MIDI Class driver functions, so that multiple instances of the same class
  *  within a device can be differentiated from one another.
@@ -60,128 +70,119 @@ USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface =
 
 /* Send n MIDI bytes in buf over USB */
 void
-midi_send (uint8_t *buf, unsigned int n)
+midi_send (uint8_t p0, uint8_t p1, uint8_t p2, uint8_t p3)
 {
     MIDI_EventPacket_t MIDIEvent = {
-        .CableNumber = 0,
-        /* FIXME: system common / sysex need different commad nyble */
-        .Command     = (buf[0] >> 4),
-        .Data1       = buf[0],
+        .CableNumber = (p0 >> 4),
+        .Command     = (p0 & 0x0f),
+        .Data1       = p1,
+        .Data2       = p2,
+        .Data3       = p3,
     };
-
-    switch (n) {
-    case 3:
-        MIDIEvent.Data3 = buf[2];
-    case 2:
-        MIDIEvent.Data2 = buf[1];
-    }
 
     MIDI_Device_SendEventPacket(&Keyboard_MIDI_Interface, &MIDIEvent);
     MIDI_Device_Flush(&Keyboard_MIDI_Interface);
 }
 
-/* Read one MIDI byte from UART.
- *
- * If the byte is a realtime message, send it out via USB right away and return
- * false. Returns true otherwise.
- */
-bool
-midi_read (uint8_t *byte)
-{
-    *byte = Serial_RxByte();
+uint8_t data[2];
+midi_state state = STATE_UNKNOWN;
 
-    if (*byte < 0xf8)
-        return true;
-
-    /* realtime message */
-    midi_send(byte, 1);
-    return false;
-}
-
-/* Read stuff from UART, buffering it until a full MIDI packet can be sent, and
- * send it through USB. */
+/* Try to write a midi byte out to USB. If it's not a complete packet yet,
+ * buffer it and send it later when it's complete. */
 void
-serial_read (void)
+usb_write (uint8_t b)
 {
-    static uint8_t last_status = 0;
-    static unsigned int bufcur = 0;
-    static uint8_t buf[3]; /* the usb midi packets have 3 bytes of data only,
-                            * even though the actual midi messages might be
-                            * longer */
-    uint8_t byte;
+    uint8_t p0 = 0;
 
-    if (!midi_read(&byte))
-        /* we got a realtime message and handled it. try again if
-         * there's still something to read. */
-        return;
-
-    /* when reading the first byte of a message, and that byte is not a
-     * status byte, we either started receiving bytes from the middle of
-     * a message, which we're going to ignore, or we're in the middle of
-     * a running status. */
-    if (!bufcur && !(byte & (1 << 7))) {
-        if (!last_status)
-            return;
-
-        buf[0] = last_status;
-        bufcur = 1;
-    }
-
-    buf[bufcur++] = byte;
-
-    /* flush when we've reached the maximum of 3 bytes */
-    if (bufcur == 3) {
-        midi_send(buf, 3);
-        bufcur = 0;
-        return;
-    }
-
-    /* otherwise see if we can expect any more bytes for the current
-     * status byte and flush if we can't */
-
-    unsigned int expect = 0;
-
-    /* FIXME: only for voice messages */
-    switch (buf[0] >> 4) {
-    case 0x8: /* note on */
-    case 0x9: /* note off */
-    case 0xa: /* aftertouch */
-    case 0xb: /* control change */
-    case 0xe: /* pitch wheel */
-        expect = 3;
-        break;
-    case 0xc: /* program change */
-    case 0xd: /* channel pressure */
-        expect = 2;
-        break;
-    case 0xf: /* system common - realtime is already covered in midi_read */
-        /* FIXME: needs to reset last_status */
-        switch (buf[0]) {
-        case 0xf0: /* sysex start */
-            /* FIXME! */
+    if (b >= 0xf8) {
+        midi_send(p0 | 0x0f, b, 0, 0);
+    } else if (b >= 0xf0) {
+        switch (b) {
+        case 0xf0:
+            data[0] = b;
+            state = STATE_SYSEX_1;
             break;
-        case 0xf7: /* sysex end */
-            /* FIXME! */
+        case 0xf1:
+        case 0xf3:
+            data[0] = b;
+            state = STATE_1PARAM;
             break;
-        case 0xf6: /* tune request */
-            expect = 1;
+        case 0xf2:
+            data[0] = b;
+            state = STATE_2PARAM_1;
             break;
-        case 0xf1: /* mtc quarter frame message */
-        case 0xf3: /* song select */
-            expect = 2;
+        case 0xf4:
+        case 0xf5:
+            state = STATE_UNKNOWN;
             break;
-        case 0xf2: /* song position pointer */
-            expect = 3;
+        case 0xf6:
+            midi_send(p0 | 0x05, 0xf6, 0, 0);
+            state = STATE_UNKNOWN;
+            break;
+        case 0xf7:
+            switch (state) {
+            case STATE_SYSEX_0:
+                midi_send(p0 | 0x05, 0xf7, 0, 0);
+                break;
+            case STATE_SYSEX_1:
+                midi_send(p0 | 0x06, data[0], 0xf7, 0);
+                break;
+            case STATE_SYSEX_2:
+                midi_send(p0 | 0x07, data[0], data[1], 0xf7);
+                break;
+            default:
+                break;
+            }
+            state = STATE_UNKNOWN;
             break;
         }
-        break;
+    } else if (b >= 0x80) {
+        data[0] = b;
+        if (b >= 0xc0 && b <= 0xdf)
+            state = STATE_1PARAM;
+        else
+            state = STATE_2PARAM_1;
+    } else { /* b < 0x80 */
+        switch (state) {
+        case STATE_1PARAM:
+            if (data[0] < 0xf0) {
+                p0 |= data[0] >> 4;
+            } else {
+                p0 |= 0x02;
+                state = STATE_UNKNOWN;
+            }
+            midi_send(p0, data[0], b, 0);
+            break;
+        case STATE_2PARAM_1:
+            data[1] = b;
+            state = STATE_2PARAM_2;
+            break;
+        case STATE_2PARAM_2:
+            if (data[0] < 0xf0) {
+                p0 |= data[0] >> 4;
+                state = STATE_2PARAM_1;
+            } else {
+                p0 |= 0x03;
+                state = STATE_UNKNOWN;
+            }
+            midi_send(p0, data[0], data[1], b);
+            break;
+        case STATE_SYSEX_0:
+            data[0] = b;
+            state = STATE_SYSEX_1;
+            break;
+        case STATE_SYSEX_1:
+            data[1] = b;
+            state = STATE_SYSEX_2;
+            break;
+        case STATE_SYSEX_2:
+            midi_send(p0 | 0x04, data[0], data[1], b);
+            state = STATE_SYSEX_0;
+            break;
+        default:
+            break;
+        }
     }
-
-    if (bufcur != expect)
-        return;
-
-    /* we got a full packet. send it out */
-    midi_send(buf, bufcur);
 }
 
 /* Read MIDI packets from USB and send them out again via UART. */
@@ -235,7 +236,7 @@ int main(void)
 
     for (;;) {
         while (Serial_IsCharReceived())
-            serial_read();
+            usb_write(Serial_RxByte());
 
         MIDI_EventPacket_t ReceivedMIDIEvent;
         while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent))
