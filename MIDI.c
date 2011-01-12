@@ -107,7 +107,7 @@ int main(void)
                 break;
             case 0x5: /* single byte system common message or sysex ends with
                        * following single byte */
-            case 0xf: /* single byte (?) */
+            case 0xf: /* single byte for transfer without parsing */
                 Serial_TxByte(ReceivedMIDIEvent.Data1);
                 break;
             case 0x2: /* 2 byte system common message */
